@@ -1,14 +1,14 @@
 [package]
 name = "penput"
 description = "Penput turns your mobile/tablet into a wireless touchpad for your PC."
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT"
 edition = "2024"
 
 [dependencies]
 tokio = {version = "1.48.0", features = ["full"]}
-tokio-tungstenite = "0.21.0"
-enigo = "0.1.3"
+tokio-tungstenite = "0.28.0"
+enigo = "0.6.1"
 axum = { version = "0.8.7", features = ["ws"] }
 tower = "0.5.2"
 tower-http = {version = "0.6.8", features = ["fs", "trace"]}

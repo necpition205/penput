@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use display_info::DisplayInfo;
-use enigo::{Enigo, MouseControllable};
+use enigo::{Coordinate, Enigo, Mouse};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
@@ -32,13 +32,14 @@ impl MouseController {
         let screen_h = display.height as f64;
 
         thread::spawn(move || {
-            let mut enigo = Enigo::new();
+            let enigo_settings = enigo::Settings::default();
+            let mut enigo = Enigo::new(&enigo_settings).unwrap();
             for cmd in rx {
                 let ratio_x = cmd.x as f64 / cmd.client_w as f64;
                 let ratio_y = cmd.y as f64 / cmd.client_h as f64;
                 let screen_x = (ratio_x * screen_w) as i32;
                 let screen_y = (ratio_y * screen_h) as i32;
-                enigo.mouse_move_to(screen_x, screen_y);
+                let _ = enigo.move_mouse(screen_x, screen_y, Coordinate::Abs);
             }
         });
 
