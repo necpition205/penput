@@ -2,10 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Penput Client</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Penput | Touchpad</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  
+  <main id="pad" aria-label="Touchpad area">
+    <button id="connect-btn" aria-label="Connect to desktop">Connect</button>
+    <button id="exit-btn" aria-label="Exit fullscreen and disconnect">✕</button>
+    <div id="status">
+      <span id="touch-indicator"></span>
+      <span id="status-text">Disconnected</span>
+    </div>
+  </main>
+  <script src="/app.js" type="module"></script>
 </body>
 </html>
