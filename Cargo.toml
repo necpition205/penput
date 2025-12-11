@@ -1,5 +1,6 @@
 [package]
 name = "penput"
+description = "Penput turns your mobile/tablet into a wireless touchpad for your PC."
 version = "0.1.0"
 edition = "2024"
 
