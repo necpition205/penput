@@ -2,6 +2,7 @@
 name = "penput"
 description = "Penput turns your mobile/tablet into a wireless touchpad for your PC."
 version = "0.1.0"
+license = "MIT"
 edition = "2024"
 
 [dependencies]
