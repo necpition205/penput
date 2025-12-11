@@ -1,42 +1,59 @@
 use anyhow::{Context, Result};
 use display_info::DisplayInfo;
 use enigo::{Enigo, MouseControllable};
-use std::sync::Mutex;
+use std::sync::mpsc::{self, Sender};
+use std::thread;
+
+#[derive(Debug, Clone)]
+struct MoveCmd {
+    client_w: u16,
+    client_h: u16,
+    x: u16,
+    y: u16,
+}
 
 /// Mouse controller that maps client coordinates to desktop absolute positions.
+#[derive(Clone)]
 pub struct MouseController {
-    enigo: Mutex<Enigo>,
-    screen_width: i32,
-    screen_height: i32,
+    tx: Sender<MoveCmd>,
 }
 
 impl MouseController {
-    /// Create a new controller and capture the primary screen size.
+    /// Create a new controller and spawn a dedicated worker thread for mouse moves.
     pub fn new() -> Result<Self> {
-        let enigo = Enigo::new();
         let display = DisplayInfo::all()
             .context("Failed to enumerate displays")?
             .into_iter()
             .next()
             .context("No displays found")?;
 
-        Ok(Self {
-            enigo: Mutex::new(enigo),
-            screen_width: display.width as i32,
-            screen_height: display.height as i32,
-        })
+        let (tx, rx) = mpsc::channel::<MoveCmd>();
+        let screen_w = display.width as f64;
+        let screen_h = display.height as f64;
+
+        thread::spawn(move || {
+            let mut enigo = Enigo::new();
+            for cmd in rx {
+                let ratio_x = cmd.x as f64 / cmd.client_w as f64;
+                let ratio_y = cmd.y as f64 / cmd.client_h as f64;
+                let screen_x = (ratio_x * screen_w) as i32;
+                let screen_y = (ratio_y * screen_h) as i32;
+                enigo.mouse_move_to(screen_x, screen_y);
+            }
+        });
+
+        Ok(Self { tx })
     }
 
-    /// Move the mouse to the absolute position mapped from client touch input.
+    /// Queue a mouse move; computation is done in the worker thread to avoid blocking async tasks.
     pub fn move_absolute(&self, client_w: u16, client_h: u16, x: u16, y: u16) -> Result<()> {
-        let ratio_x = x as f64 / client_w as f64;
-        let ratio_y = y as f64 / client_h as f64;
-
-        let screen_x = (ratio_x * self.screen_width as f64) as i32;
-        let screen_y = (ratio_y * self.screen_height as f64) as i32;
-
-        let mut enigo = self.enigo.lock().unwrap();
-        enigo.mouse_move_to(screen_x, screen_y);
+        // Best-effort: drop if channel is full/closed.
+        let _ = self.tx.send(MoveCmd {
+            client_w,
+            client_h,
+            x,
+            y,
+        });
         Ok(())
     }
 }
