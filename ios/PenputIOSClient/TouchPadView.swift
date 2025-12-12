@@ -5,6 +5,7 @@ import UIKit
 struct TouchPadView: View {
     @ObservedObject var client: UdpTouchClient
     let padScalePct: Double
+    let stylusOnly: Bool
 
     // Match the web client's pad sizing: scale by min side and preserve remote aspect ratio.
     private func computePadSize(containerSize: CGSize) -> CGSize {
@@ -31,6 +32,7 @@ struct TouchPadView: View {
 
     var body: some View {
         TouchPadRepresentable(
+            stylusOnly: stylusOnly,
             onTouch: { point, size in
                 let padSize = computePadSize(containerSize: size)
 
@@ -58,12 +60,14 @@ struct TouchPadView: View {
 }
 
 private struct TouchPadRepresentable: UIViewRepresentable {
+    let stylusOnly: Bool
     let onTouch: (CGPoint, CGSize) -> Void
     let onEnd: () -> Void
     let onLayout: (CGSize) -> Void
 
     func makeUIView(context: Context) -> TouchPadUIView {
         let view = TouchPadUIView()
+        view.stylusOnly = stylusOnly
         view.onTouch = onTouch
         view.onEnd = onEnd
         view.onLayout = onLayout
@@ -71,6 +75,7 @@ private struct TouchPadRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: TouchPadUIView, context: Context) {
+        uiView.stylusOnly = stylusOnly
         uiView.onTouch = onTouch
         uiView.onEnd = onEnd
         uiView.onLayout = onLayout
@@ -79,9 +84,22 @@ private struct TouchPadRepresentable: UIViewRepresentable {
 }
 
 private final class TouchPadUIView: UIView {
+    // When enabled, ignore finger/palm touches so Apple Pencil input stays stable.
+    var stylusOnly: Bool = false {
+        didSet {
+            if stylusOnly != oldValue {
+                if stylusOnly, let activeTouch, activeTouch.type != .stylus {
+                    self.activeTouch = nil
+                    onEnd?()
+                }
+            }
+        }
+    }
     var onTouch: ((CGPoint, CGSize) -> Void)?
     var onEnd: (() -> Void)?
     var onLayout: ((CGSize) -> Void)?
+
+    private var activeTouch: UITouch?
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -97,16 +115,38 @@ private final class TouchPadUIView: UIView {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        onEnd?()
+        endTouchesIfNeeded(touches)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        onEnd?()
+        endTouchesIfNeeded(touches)
     }
 
     private func handleTouches(_ touches: Set<UITouch>) {
-        guard let touch = touches.first else { return }
+        if let activeTouch {
+            guard touches.contains(activeTouch) else { return }
+            let point = activeTouch.location(in: self)
+            onTouch?(point, bounds.size)
+            return
+        }
+
+        let touch: UITouch?
+        if stylusOnly {
+            touch = touches.first(where: { $0.type == .stylus })
+        } else {
+            touch = touches.first
+        }
+        guard let touch else { return }
+
+        activeTouch = touch
         let point = touch.location(in: self)
         onTouch?(point, bounds.size)
+    }
+
+    private func endTouchesIfNeeded(_ touches: Set<UITouch>) {
+        guard let activeTouch else { return }
+        guard touches.contains(activeTouch) else { return }
+        self.activeTouch = nil
+        onEnd?()
     }
 }

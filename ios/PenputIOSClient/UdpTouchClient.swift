@@ -29,12 +29,24 @@ final class UdpTouchClient: NSObject, ObservableObject {
     @Published private(set) var sendRate: Double = 0
     @Published private(set) var rttMs: Double? = nil
     @Published private(set) var statusText: String = "Disconnected"
+    @Published private(set) var pingIntervalMs: Double? = nil
+    @Published private(set) var pongIntervalMs: Double? = nil
     @Published private(set) var remoteScreenSize: CGSize = .zero
     @Published private(set) var viewportSize: CGSize = .zero
 
     var rttMsText: String {
         guard let rttMs else { return "-" }
         return String(format: "%.0f ms", rttMs)
+    }
+
+    var pingIntervalMsText: String {
+        guard let pingIntervalMs else { return "-" }
+        return String(format: "%.0f ms", pingIntervalMs)
+    }
+
+    var pongIntervalMsText: String {
+        guard let pongIntervalMs else { return "-" }
+        return String(format: "%.0f ms", pongIntervalMs)
     }
 
     private let queue = DispatchQueue(label: "penput.udp.client")
@@ -56,6 +68,9 @@ final class UdpTouchClient: NSObject, ObservableObject {
 
     private var clientW: UInt16 = 0
     private var clientH: UInt16 = 0
+
+    private var lastPingSentMs: UInt64 = 0
+    private var lastPongReceivedMs: UInt64 = 0
 
     private var latestX: UInt16 = 0
     private var latestY: UInt16 = 0
@@ -132,8 +147,15 @@ final class UdpTouchClient: NSObject, ObservableObject {
             self.state = .disconnected
             self.statusText = "Disconnected"
             self.endpoint = self.endpoint
+            self.rttMs = nil
+            self.pingIntervalMs = nil
+            self.pongIntervalMs = nil
             self.remoteScreenSize = .zero
             self.viewportSize = .zero
+        }
+        queue.async {
+            self.lastPingSentMs = 0
+            self.lastPongReceivedMs = 0
         }
     }
 
@@ -257,6 +279,13 @@ final class UdpTouchClient: NSObject, ObservableObject {
 
     private func sendPing() {
         let tMs = UInt64(DispatchTime.now().uptimeNanoseconds / 1_000_000)
+        let deltaMs: Double? = lastPingSentMs == 0 ? nil : Double(tMs &- lastPingSentMs)
+        lastPingSentMs = tMs
+        if let deltaMs {
+            onMain {
+                self.pingIntervalMs = deltaMs
+            }
+        }
         pingPacket[0] = 0x03
         for i in 0..<8 {
             let shift = UInt64(56 - (i * 8))
@@ -325,8 +354,13 @@ final class UdpTouchClient: NSObject, ObservableObject {
             if data.count >= 9 {
                 let t = readU64BE(data: data, offset: 1)
                 let now = UInt64(DispatchTime.now().uptimeNanoseconds / 1_000_000)
+                let deltaMs: Double? = lastPongReceivedMs == 0 ? nil : Double(now &- lastPongReceivedMs)
+                lastPongReceivedMs = now
                 onMain {
                     self.rttMs = Double(now &- t)
+                    if let deltaMs {
+                        self.pongIntervalMs = deltaMs
+                    }
                 }
             }
 

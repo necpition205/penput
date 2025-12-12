@@ -7,10 +7,11 @@ struct ContentView: View {
     @State private var host: String = ""
     @State private var portText: String = "9002"
     @State private var padScalePct: Double = 100
+    @AppStorage("stylusOnly") private var stylusOnly: Bool = false
 
     var body: some View {
         ZStack {
-            TouchPadView(client: client, padScalePct: padScalePct)
+            TouchPadView(client: client, padScalePct: padScalePct, stylusOnly: stylusOnly)
                 .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 12) {
@@ -51,6 +52,10 @@ struct ContentView: View {
                         .frame(width: 44, alignment: .trailing)
                 }
 
+                Toggle("Stylus only", isOn: $stylusOnly)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 MetricsView(client: client)
 
                 Spacer()
@@ -78,6 +83,8 @@ private struct MetricsView: View {
             Text("Viewport: \(Int(client.viewportSize.width))x\(Int(client.viewportSize.height))")
             Text("Send: \(String(format: "%.1f", client.sendRate)) /s")
             Text("RTT: \(client.rttMsText)")
+            Text("Ping Δ: \(client.pingIntervalMsText)")
+            Text("Pong Δ: \(client.pongIntervalMsText)")
         }
         .font(.caption2)
         .padding(10)

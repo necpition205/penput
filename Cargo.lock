@@ -998,7 +998,7 @@ dependencies = [
 
 [[package]]
 name = "penput"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
