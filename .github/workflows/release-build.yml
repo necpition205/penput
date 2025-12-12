@@ -50,26 +50,21 @@ jobs:
           cp target/release/penput dist/penput-linux-x86_64
           sha256sum dist/penput-linux-x86_64 > dist/penput-linux-x86_64.sha256
 
-      - name: Create GitHub Release
-        id: create_release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: release-${{ github.sha }}
-          name: Release ${{ github.sha }}
-          draft: false
-          prerelease: false
+      - name: Create / update GitHub Release + upload Linux assets
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="release-${GITHUB_SHA}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release exists: $TAG"
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "Release $GITHUB_SHA" --notes ""
+          fi
 
-      - name: Upload binary
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: release-${{ github.sha }}
-          files: |
-            dist/penput-linux-x86_64
-            dist/penput-linux-x86_64.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          gh release upload "$TAG" \
+            dist/penput-linux-x86_64 \
+            dist/penput-linux-x86_64.sha256 \
+            --clobber
 
   windows_binary:
     if: contains(github.event.head_commit.message, 'release')
@@ -96,14 +91,11 @@ jobs:
           "$hash  penput-windows-x86_64.exe" | Out-File -Encoding ascii dist/penput-windows-x86_64.exe.sha256
 
       - name: Upload Windows binary
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: release-${{ github.sha }}
-          files: |
-            dist/penput-windows-x86_64.exe
-            dist/penput-windows-x86_64.exe.sha256
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "release-$env:GITHUB_SHA"
+          gh release upload $tag dist/penput-windows-x86_64.exe dist/penput-windows-x86_64.exe.sha256 --clobber
 
   ios_ipa:
     if: contains(github.event.head_commit.message, 'release')
@@ -162,12 +154,13 @@ jobs:
           } >> PenputIOSClient-unsigned-${{ github.sha }}.details.txt
 
       - name: Upload iOS IPA to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: release-${{ github.sha }}
-          files: |
-            ios/PenputIOSClient/PenputIOSClient-unsigned-${{ github.sha }}.ipa
-            ios/PenputIOSClient/PenputIOSClient-unsigned-${{ github.sha }}.ipa.sha256
-            ios/PenputIOSClient/PenputIOSClient-unsigned-${{ github.sha }}.details.txt
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd ios/PenputIOSClient
+          TAG="release-${GITHUB_SHA}"
+          gh release upload "$TAG" \
+            "PenputIOSClient-unsigned-${GITHUB_SHA}.ipa" \
+            "PenputIOSClient-unsigned-${GITHUB_SHA}.ipa.sha256" \
+            "PenputIOSClient-unsigned-${GITHUB_SHA}.details.txt" \
+            --clobber
