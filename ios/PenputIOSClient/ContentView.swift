@@ -6,10 +6,11 @@ struct ContentView: View {
 
     @State private var host: String = ""
     @State private var portText: String = "9002"
+    @State private var padScalePct: Double = 100
 
     var body: some View {
         ZStack {
-            TouchPadView(client: client)
+            TouchPadView(client: client, padScalePct: padScalePct)
                 .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 12) {
@@ -39,6 +40,17 @@ struct ContentView: View {
                     }
                 }
 
+                HStack(spacing: 10) {
+                    Text("Pad")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Slider(value: $padScalePct, in: 30...100, step: 5)
+                    Text("\(Int(padScalePct))%")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .trailing)
+                }
+
                 MetricsView(client: client)
 
                 Spacer()
@@ -62,6 +74,8 @@ private struct MetricsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("State: \(client.state.rawValue)")
             Text("Endpoint: \(client.endpoint)")
+            Text("Remote: \(Int(client.remoteScreenSize.width))x\(Int(client.remoteScreenSize.height))")
+            Text("Viewport: \(Int(client.viewportSize.width))x\(Int(client.viewportSize.height))")
             Text("Send: \(String(format: "%.1f", client.sendRate)) /s")
             Text("RTT: \(client.rttMsText)")
         }

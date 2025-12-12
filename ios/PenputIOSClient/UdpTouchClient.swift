@@ -9,7 +9,7 @@ import UIKit
 // - HELLO: [0x01][w:u16][h:u16]
 // - MOVE:  [0x02][x:u16][y:u16]
 // - PING:  [0x03][t:u64]
-// - ACCEPT: [0x10]
+// - ACCEPT: [0x10][remote_w:u16][remote_h:u16] (optional)
 // - REJECT: [0x11]
 // - BUSY:   [0x12]
 // - PONG:  [0x13][t:u64]
@@ -29,6 +29,8 @@ final class UdpTouchClient: NSObject, ObservableObject {
     @Published private(set) var sendRate: Double = 0
     @Published private(set) var rttMs: Double? = nil
     @Published private(set) var statusText: String = "Disconnected"
+    @Published private(set) var remoteScreenSize: CGSize = .zero
+    @Published private(set) var viewportSize: CGSize = .zero
 
     var rttMsText: String {
         guard let rttMs else { return "-" }
@@ -130,6 +132,8 @@ final class UdpTouchClient: NSObject, ObservableObject {
             self.state = .disconnected
             self.statusText = "Disconnected"
             self.endpoint = self.endpoint
+            self.remoteScreenSize = .zero
+            self.viewportSize = .zero
         }
     }
 
@@ -140,6 +144,9 @@ final class UdpTouchClient: NSObject, ObservableObject {
 
         clientW = w
         clientH = h
+        onMain {
+            self.viewportSize = CGSize(width: CGFloat(w), height: CGFloat(h))
+        }
 
         helloPacket[0] = 0x01
         helloPacket[1] = UInt8((w >> 8) & 0xff)
@@ -153,13 +160,14 @@ final class UdpTouchClient: NSObject, ObservableObject {
         }
     }
 
-    func updateTouch(point: CGPoint, in size: CGSize) {
-        updateViewport(size: size)
-
+    func updateTouch(point: CGPoint, padSize: CGSize) {
         guard clientW > 0, clientH > 0 else { return }
 
-        let relX = max(0.0, min(1.0, Double(point.x / max(1.0, size.width))))
-        let relY = max(0.0, min(1.0, Double(point.y / max(1.0, size.height))))
+        let padW = max(1.0, padSize.width)
+        let padH = max(1.0, padSize.height)
+
+        let relX = max(0.0, min(1.0, Double(point.x / padW)))
+        let relY = max(0.0, min(1.0, Double(point.y / padH)))
 
         let x = UInt16(min(Double(clientW - 1), max(0.0, (relX * Double(clientW)).rounded())))
         let y = UInt16(min(Double(clientH - 1), max(0.0, (relY * Double(clientH)).rounded())))
@@ -282,7 +290,12 @@ final class UdpTouchClient: NSObject, ObservableObject {
         switch first {
         case 0x10:
             // ACCEPT
+            let remoteW = data.count >= 5 ? readU16BE(data: data, offset: 1) : 0
+            let remoteH = data.count >= 5 ? readU16BE(data: data, offset: 3) : 0
             onMain {
+                if remoteW > 0 && remoteH > 0 {
+                    self.remoteScreenSize = CGSize(width: CGFloat(remoteW), height: CGFloat(remoteH))
+                }
                 self.state = .connected
                 self.statusText = "Connected"
             }
@@ -328,6 +341,11 @@ final class UdpTouchClient: NSObject, ObservableObject {
             value = (value << 8) | UInt64(data[offset + i])
         }
         return value
+    }
+
+    private func readU16BE(data: Data, offset: Int) -> UInt16 {
+        if data.count < offset + 2 { return 0 }
+        return (UInt16(data[offset]) << 8) | UInt16(data[offset + 1])
     }
 
     private func updateSendRateOnSend() {

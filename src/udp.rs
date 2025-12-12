@@ -12,7 +12,7 @@ const MSG_MOVE: u8 = 0x02; // [type=2][x:u16be][y:u16be]
 const MSG_PING: u8 = 0x03; // [type=3][t:u64be]
 
 // UDP packet types (server -> client)
-const MSG_ACCEPT: u8 = 0x10; // [type=0x10]
+const MSG_ACCEPT: u8 = 0x10; // [type=0x10][remote_w:u16be][remote_h:u16be]
 const MSG_REJECT: u8 = 0x11; // [type=0x11]
 const MSG_BUSY: u8 = 0x12; // [type=0x12]
 const MSG_PONG: u8 = 0x13; // [type=0x13][t:u64be]
@@ -72,12 +72,17 @@ pub async fn serve_udp(state: UdpState, port: u16) -> anyhow::Result<()> {
                         let w = u16::from_be_bytes([pkt[1], pkt[2]]);
                         let h = u16::from_be_bytes([pkt[3], pkt[4]]);
 
+                        let (screen_w, screen_h) = state.mouse.screen_size();
+                        let screen_w_be = screen_w.to_be_bytes();
+                        let screen_h_be = screen_h.to_be_bytes();
+                        let accept = [MSG_ACCEPT, screen_w_be[0], screen_w_be[1], screen_h_be[0], screen_h_be[1]];
+
                         match session.as_mut() {
                             Some(s) if s.addr == addr => {
                                 s.client_w = w;
                                 s.client_h = h;
                                 s.last_seen = now;
-                                let _ = socket.send_to(&[MSG_ACCEPT], addr).await;
+                                let _ = socket.send_to(&accept, addr).await;
                             }
                             Some(_) => {
                                 let _ = socket.send_to(&[MSG_BUSY], addr).await;
@@ -103,7 +108,7 @@ pub async fn serve_udp(state: UdpState, port: u16) -> anyhow::Result<()> {
                                 });
 
                                 info!("✓ UDP client approved: {} ({}x{})", addr, w, h);
-                                let _ = socket.send_to(&[MSG_ACCEPT], addr).await;
+                                let _ = socket.send_to(&accept, addr).await;
                             }
                         }
                     }
