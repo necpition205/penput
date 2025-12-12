@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use display_info::DisplayInfo;
 use enigo::{Coordinate, Enigo, Mouse};
-use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 struct MoveCmd {
     client_w: u16,
     client_h: u16,
@@ -12,10 +12,15 @@ struct MoveCmd {
     y: u16,
 }
 
+struct SharedMove {
+    latest: Mutex<Option<MoveCmd>>,
+    cv: Condvar,
+}
+
 /// Mouse controller that maps client coordinates to desktop absolute positions.
 #[derive(Clone)]
 pub struct MouseController {
-    tx: Sender<MoveCmd>,
+    shared: Arc<SharedMove>,
 }
 
 impl MouseController {
@@ -27,14 +32,28 @@ impl MouseController {
             .next()
             .context("No displays found")?;
 
-        let (tx, rx) = mpsc::channel::<MoveCmd>();
+        // Keep only the latest move request to avoid backlog (which can cause periodic stutter).
+        let shared = Arc::new(SharedMove {
+            latest: Mutex::new(None),
+            cv: Condvar::new(),
+        });
+        let worker_shared = shared.clone();
+
         let screen_w = display.width as f64;
         let screen_h = display.height as f64;
 
         thread::spawn(move || {
             let enigo_settings = enigo::Settings::default();
             let mut enigo = Enigo::new(&enigo_settings).unwrap();
-            for cmd in rx {
+            loop {
+                let cmd = {
+                    let mut guard = worker_shared.latest.lock().unwrap();
+                    while guard.is_none() {
+                        guard = worker_shared.cv.wait(guard).unwrap();
+                    }
+                    guard.take().unwrap()
+                };
+
                 let ratio_x = cmd.x as f64 / cmd.client_w as f64;
                 let ratio_y = cmd.y as f64 / cmd.client_h as f64;
                 let screen_x = (ratio_x * screen_w) as i32;
@@ -43,18 +62,25 @@ impl MouseController {
             }
         });
 
-        Ok(Self { tx })
+        Ok(Self { shared })
     }
 
     /// Queue a mouse move; computation is done in the worker thread to avoid blocking async tasks.
     pub fn move_absolute(&self, client_w: u16, client_h: u16, x: u16, y: u16) -> Result<()> {
-        // Best-effort: drop if channel is full/closed.
-        let _ = self.tx.send(MoveCmd {
+        if client_w == 0 || client_h == 0 {
+            return Ok(());
+        }
+
+        // Overwrite the latest value; intermediate points are intentionally dropped.
+        let mut guard = self.shared.latest.lock().unwrap();
+        *guard = Some(MoveCmd {
             client_w,
             client_h,
             x,
             y,
         });
+        drop(guard);
+        self.shared.cv.notify_one();
         Ok(())
     }
 }

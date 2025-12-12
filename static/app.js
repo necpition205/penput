@@ -10,6 +10,70 @@ let frameRequested = false;
 let connected = false;
 let connecting = false;
 
+// Reuse the same buffer to avoid periodic GC pauses on mobile.
+const moveBuf = new ArrayBuffer(4);
+const moveView = new DataView(moveBuf);
+
+// Cache layout values for the hot path.
+let padRect = null;
+let clientW = Math.max(1, Math.min(65535, Math.round(window.innerWidth)));
+let clientH = Math.max(1, Math.min(65535, Math.round(window.innerHeight)));
+
+// Metrics (shown on-screen so mobile can debug without console)
+let wsUrlInUse = "";
+let lastRttMs = null;
+let lastPongAt = 0;
+let pingTimer = null;
+let metricsTimer = null;
+let sendCount = 0;
+let sendCountWindowStart = performance.now();
+let sendRate = 0;
+
+const metricsEl = document.createElement("div");
+metricsEl.id = "metrics";
+document.body.appendChild(metricsEl);
+
+function refreshClientSize() {
+  clientW = Math.max(1, Math.min(65535, Math.round(window.innerWidth)));
+  clientH = Math.max(1, Math.min(65535, Math.round(window.innerHeight)));
+}
+
+function refreshPadRect() {
+  padRect = pad.getBoundingClientRect();
+}
+
+function startMetricsLoop() {
+  if (metricsTimer) return;
+  metricsTimer = window.setInterval(() => {
+    const rtt = lastRttMs == null ? "-" : `${Math.round(lastRttMs)}ms`;
+    const pongAge = lastPongAt ? `${Math.round(performance.now() - lastPongAt)}ms ago` : "-";
+    metricsEl.textContent =
+      `WS: ${connected ? "connected" : connecting ? "connecting" : "disconnected"}\n` +
+      `URL: ${wsUrlInUse || "-"}\n` +
+      `Client: ${clientW}x${clientH}\n` +
+      `Touch: ${touchPoint.x},${touchPoint.y}\n` +
+      `Send: ${sendRate.toFixed(1)}/s\n` +
+      `RTT: ${rtt} (pong ${pongAge})`;
+  }, 250);
+}
+
+function stopMetricsLoop() {
+  if (metricsTimer) {
+    window.clearInterval(metricsTimer);
+    metricsTimer = null;
+  }
+}
+
+function updateSendRate() {
+  const now = performance.now();
+  const elapsed = Math.max(1, now - sendCountWindowStart);
+  sendRate = (sendCount * 1000) / elapsed;
+  if (elapsed >= 1000) {
+    sendCount = 0;
+    sendCountWindowStart = now;
+  }
+}
+
 function connect() {
   if (connecting || connected) return;
   const loc = window.location;
@@ -23,6 +87,7 @@ function connect() {
   connecting = true;
   connectBtn.disabled = true;
   statusText.textContent = "Connecting...";
+  startMetricsLoop();
 
   const tryConnect = () => {
     if (attempt >= tryPorts.length) {
@@ -34,6 +99,7 @@ function connect() {
     const port = tryPorts[attempt];
     const wsUrl = `${wsScheme}://${loc.hostname}:${port}/ws`;
     statusText.textContent = `Connecting ${wsUrl}`;
+    wsUrlInUse = wsUrl;
 
     ws = new WebSocket(wsUrl);
     ws.binaryType = "arraybuffer";
@@ -48,6 +114,17 @@ function connect() {
     const onOpen = () => {
       statusText.textContent = "Authorizing...";
       sendInit();
+
+      if (pingTimer) window.clearInterval(pingTimer);
+      pingTimer = window.setInterval(() => {
+        if (!connected) return;
+        const t = Math.floor(performance.now());
+        try {
+          ws?.send(JSON.stringify({ type: "ping", t }));
+        } catch (_) {
+          // ignore
+        }
+      }, 1000);
     };
 
     const onMsg = (event) => {
@@ -60,15 +137,32 @@ function connect() {
         connectBtn.classList.add("hidden");
         connectBtn.disabled = false;
         cleanup();
+        refreshClientSize();
+        refreshPadRect();
       } else if (msg === "rejected" || msg === "Already connected") {
         statusText.textContent = msg;
         statusText.classList.remove("ready");
         disconnect();
+      } else if (typeof msg === "string" && msg.startsWith("{")) {
+        // App-level pong for RTT measurement.
+        try {
+          const obj = JSON.parse(msg);
+          if (obj && obj.type === "pong" && typeof obj.t === "number") {
+            lastRttMs = performance.now() - obj.t;
+            lastPongAt = performance.now();
+          }
+        } catch (_) {
+          // ignore
+        }
       }
     };
 
     const onClose = () => {
       cleanup();
+      if (pingTimer) {
+        window.clearInterval(pingTimer);
+        pingTimer = null;
+      }
       if (connected) {
         connected = false;
         statusText.textContent = "Disconnected";
@@ -77,6 +171,7 @@ function connect() {
         connectBtn.classList.remove("hidden");
         connectBtn.disabled = false;
         connecting = false;
+        wsUrlInUse = "";
       } else {
         attempt += 1;
         tryConnect();
@@ -99,10 +194,11 @@ function connect() {
 }
 
 function sendInit() {
+  refreshClientSize();
   const payload = JSON.stringify({
     type: "init",
-    width: window.innerWidth,
-    height: window.innerHeight,
+    width: clientW,
+    height: clientH,
   });
   ws?.send(payload);
 }
@@ -117,11 +213,11 @@ function scheduleSend() {
   frameRequested = true;
   requestAnimationFrame(() => {
     frameRequested = false;
-    const buf = new ArrayBuffer(4);
-    const view = new DataView(buf);
-    view.setUint16(0, touchPoint.x, false); // big-endian
-    view.setUint16(2, touchPoint.y, false);
-    ws?.send(buf);
+    moveView.setUint16(0, touchPoint.x, false); // big-endian
+    moveView.setUint16(2, touchPoint.y, false);
+    ws?.send(moveBuf);
+    sendCount += 1;
+    updateSendRate();
   });
 }
 
@@ -129,6 +225,7 @@ function onTouchStart(e) {
   if (e.target === connectBtn || e.target === exitBtn) return;
   e.preventDefault();
   if (!connected) return;
+  refreshPadRect();
   indicator.classList.add("active");
   updatePoint(e);
 }
@@ -149,11 +246,9 @@ function onTouchEnd(e) {
 function updatePoint(e) {
   const touch = e.touches[0];
   if (!touch) return;
-  const rect = pad.getBoundingClientRect();
+  const rect = padRect || pad.getBoundingClientRect();
   const relX = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
   const relY = Math.max(0, Math.min(1, (touch.clientY - rect.top) / rect.height));
-  const clientW = Math.max(1, Math.min(65535, Math.round(window.innerWidth)));
-  const clientH = Math.max(1, Math.min(65535, Math.round(window.innerHeight)));
   const pxX = Math.min(clientW - 1, Math.max(0, Math.round(relX * clientW)));
   const pxY = Math.min(clientH - 1, Math.max(0, Math.round(relY * clientH)));
   touchPoint.x = pxX;
@@ -164,6 +259,13 @@ function updatePoint(e) {
 function disconnect() {
   ws?.close();
   ws = undefined;
+  connected = false;
+  connecting = false;
+  wsUrlInUse = "";
+  if (pingTimer) {
+    window.clearInterval(pingTimer);
+    pingTimer = null;
+  }
 }
 
 function startConnectFlow() {
@@ -194,6 +296,24 @@ exitBtn.addEventListener("click", () => {
   disconnect();
 });
 
+let resizeTimer = null;
 window.addEventListener("resize", () => {
+  if (!connected) return;
+  if (resizeTimer) window.clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    resizeTimer = null;
+    // Debounced to avoid resize storms (mobile URL bar / rotation).
+    sendInit();
+    refreshPadRect();
+  }, 150);
+});
+
+document.addEventListener("fullscreenchange", () => {
+  refreshClientSize();
+  refreshPadRect();
   if (connected) sendInit();
 });
+
+refreshClientSize();
+refreshPadRect();
+startMetricsLoop();

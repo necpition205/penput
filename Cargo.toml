@@ -1,7 +1,7 @@
 [package]
 name = "penput"
 description = "Penput turns your mobile/tablet into a wireless touchpad for your PC."
-version = "0.2.0"
+version = "0.2.1"
 license = "MIT"
 edition = "2024"
 

@@ -11,7 +11,6 @@ use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 #[derive(Clone)]
@@ -33,6 +32,13 @@ struct InitMsg {
     msg_type: String,
     width: u16,
     height: u16,
+}
+
+#[derive(Deserialize)]
+struct PingMsg {
+    #[serde(rename = "type")]
+    msg_type: String,
+    t: u64,
 }
 
 /// Build router exposing /ws endpoint.
@@ -79,7 +85,8 @@ async fn handle_socket(stream: WebSocket, addr: SocketAddr, state: AppState) {
         return;
     }
 
-    let ctx = Arc::new(Mutex::new(ClientCtx::default()));
+    // This handler runs on a single async task, so no locking is needed.
+    let mut ctx = ClientCtx::default();
     let mouse = state.mouse.clone();
     let slot = state.slot.clone();
 
@@ -88,10 +95,20 @@ async fn handle_socket(stream: WebSocket, addr: SocketAddr, state: AppState) {
             Ok(Message::Text(text)) => {
                 if let Ok(init) = serde_json::from_str::<InitMsg>(&text) {
                     if init.msg_type == "init" {
-                        let mut guard = ctx.lock().await;
-                        guard.width = init.width;
-                        guard.height = init.height;
+                        ctx.width = init.width;
+                        ctx.height = init.height;
                         info!("📡 Screen size: {}x{} from {}", init.width, init.height, addr);
+                        continue;
+                    }
+                }
+
+                // App-level ping/pong for RTT measurement.
+                if let Ok(ping) = serde_json::from_str::<PingMsg>(&text) {
+                    if ping.msg_type == "ping" {
+                        let pong = serde_json::json!({"type":"pong","t":ping.t}).to_string();
+                        if sender.send(Message::Text(pong.into())).await.is_err() {
+                            break;
+                        }
                     }
                 }
             }
@@ -99,9 +116,8 @@ async fn handle_socket(stream: WebSocket, addr: SocketAddr, state: AppState) {
                 if bin.len() >= 4 {
                     let x = u16::from_be_bytes([bin[0], bin[1]]);
                     let y = u16::from_be_bytes([bin[2], bin[3]]);
-                    let guard = ctx.lock().await;
-                    if guard.width > 0 && guard.height > 0 {
-                        let _ = mouse.move_absolute(guard.width, guard.height, x, y);
+                    if ctx.width > 0 && ctx.height > 0 {
+                        let _ = mouse.move_absolute(ctx.width, ctx.height, x, y);
                     }
                 }
             }

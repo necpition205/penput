@@ -33,10 +33,6 @@ body {
   align-items: center;
   justify-content: center;
   background: var(--panel);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: var(--radius);
   overflow: hidden;
   touch-action: none;
 }
@@ -137,4 +133,23 @@ body {
 
 #connect-btn.hidden {
   display: none;
+}
+
+#metrics {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 4;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: var(--shadow);
+  color: rgba(255, 255, 255, 0.85);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre;
+  user-select: none;
+  pointer-events: none;
 }
