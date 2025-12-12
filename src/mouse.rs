@@ -21,6 +21,8 @@ struct SharedMove {
 #[derive(Clone)]
 pub struct MouseController {
     shared: Arc<SharedMove>,
+    screen_w: u16,
+    screen_h: u16,
 }
 
 impl MouseController {
@@ -41,6 +43,8 @@ impl MouseController {
 
         let screen_w = display.width as f64;
         let screen_h = display.height as f64;
+        let screen_w_u16 = (screen_w.round().clamp(1.0, 65535.0)) as u16;
+        let screen_h_u16 = (screen_h.round().clamp(1.0, 65535.0)) as u16;
 
         thread::spawn(move || {
             let enigo_settings = enigo::Settings::default();
@@ -62,7 +66,15 @@ impl MouseController {
             }
         });
 
-        Ok(Self { shared })
+        Ok(Self {
+            shared,
+            screen_w: screen_w_u16,
+            screen_h: screen_h_u16,
+        })
+    }
+
+    pub fn screen_size(&self) -> (u16, u16) {
+        (self.screen_w, self.screen_h)
     }
 
     /// Queue a mouse move; computation is done in the worker thread to avoid blocking async tasks.

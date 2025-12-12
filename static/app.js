@@ -3,6 +3,22 @@ const indicator = document.getElementById("touch-indicator");
 const exitBtn = document.getElementById("exit-btn");
 const connectBtn = document.getElementById("connect-btn");
 const pad = document.getElementById("pad");
+const padSurface = document.getElementById("pad-surface");
+const padControls = document.getElementById("pad-controls");
+const padSizeInput = document.getElementById("pad-size");
+const padSizeValue = document.getElementById("pad-size-value");
+
+function setUiConnected(isConnected) {
+  if (isConnected) {
+    exitBtn?.classList.remove("hidden");
+    connectBtn?.classList.add("hidden");
+    if (connectBtn) connectBtn.disabled = false;
+  } else {
+    exitBtn?.classList.add("hidden");
+    connectBtn?.classList.remove("hidden");
+    if (connectBtn) connectBtn.disabled = false;
+  }
+}
 
 let ws;
 let touchPoint = { x: 0, y: 0 };
@@ -19,6 +35,11 @@ let padRect = null;
 let clientW = Math.max(1, Math.min(65535, Math.round(window.innerWidth)));
 let clientH = Math.max(1, Math.min(65535, Math.round(window.innerHeight)));
 
+let padScalePct = Number(padSizeInput?.value ?? 100);
+
+let remoteW = 0;
+let remoteH = 0;
+
 // Metrics (shown on-screen so mobile can debug without console)
 let wsUrlInUse = "";
 let lastRttMs = null;
@@ -34,12 +55,46 @@ metricsEl.id = "metrics";
 document.body.appendChild(metricsEl);
 
 function refreshClientSize() {
-  clientW = Math.max(1, Math.min(65535, Math.round(window.innerWidth)));
-  clientH = Math.max(1, Math.min(65535, Math.round(window.innerHeight)));
+  const rect = padRect || padSurface.getBoundingClientRect();
+  clientW = Math.max(1, Math.min(65535, Math.round(rect.width)));
+  clientH = Math.max(1, Math.min(65535, Math.round(rect.height)));
 }
 
 function refreshPadRect() {
-  padRect = pad.getBoundingClientRect();
+  padRect = padSurface.getBoundingClientRect();
+}
+
+function applyPadSize() {
+  const pct = Math.max(10, Math.min(100, Math.round(padScalePct)));
+  padScalePct = pct;
+  if (padSizeInput) padSizeInput.value = String(pct);
+  if (padSizeValue) padSizeValue.textContent = `${pct}%`;
+
+  const base = Math.max(1, Math.min(window.innerWidth, window.innerHeight));
+  const maxSide = Math.max(1, Math.round((base * pct) / 100));
+
+  const aspect =
+    remoteW > 0 && remoteH > 0
+      ? Math.max(1e-6, Math.min(1e6, remoteW / remoteH))
+      : 1;
+
+  let w = maxSide;
+  let h = maxSide;
+  if (aspect >= 1) {
+    // Landscape: width is the limiting side.
+    w = maxSide;
+    h = Math.max(1, Math.round(maxSide / aspect));
+  } else {
+    // Portrait: height is the limiting side.
+    h = maxSide;
+    w = Math.max(1, Math.round(maxSide * aspect));
+  }
+
+  padSurface.style.width = `${w}px`;
+  padSurface.style.height = `${h}px`;
+
+  refreshPadRect();
+  refreshClientSize();
 }
 
 function startMetricsLoop() {
@@ -134,9 +189,7 @@ function connect() {
         connecting = false;
         statusText.textContent = "Connected";
         statusText.classList.add("ready");
-        connectBtn.classList.add("hidden");
-        connectBtn.disabled = false;
-        cleanup();
+        setUiConnected(true);
         refreshClientSize();
         refreshPadRect();
       } else if (msg === "rejected" || msg === "Already connected") {
@@ -147,6 +200,13 @@ function connect() {
         // App-level pong for RTT measurement.
         try {
           const obj = JSON.parse(msg);
+          if (obj && obj.type === "remote_screen" && typeof obj.width === "number" && typeof obj.height === "number") {
+            remoteW = obj.width;
+            remoteH = obj.height;
+            applyPadSize();
+            if (connected) sendInit();
+            return;
+          }
           if (obj && obj.type === "pong" && typeof obj.t === "number") {
             lastRttMs = performance.now() - obj.t;
             lastPongAt = performance.now();
@@ -194,6 +254,7 @@ function connect() {
 }
 
 function sendInit() {
+  refreshPadRect();
   refreshClientSize();
   const payload = JSON.stringify({
     type: "init",
@@ -246,7 +307,7 @@ function onTouchEnd(e) {
 function updatePoint(e) {
   const touch = e.touches[0];
   if (!touch) return;
-  const rect = padRect || pad.getBoundingClientRect();
+  const rect = padRect || padSurface.getBoundingClientRect();
   const relX = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
   const relY = Math.max(0, Math.min(1, (touch.clientY - rect.top) / rect.height));
   const pxX = Math.min(clientW - 1, Math.max(0, Math.round(relX * clientW)));
@@ -262,6 +323,7 @@ function disconnect() {
   connected = false;
   connecting = false;
   wsUrlInUse = "";
+  setUiConnected(false);
   if (pingTimer) {
     window.clearInterval(pingTimer);
     pingTimer = null;
@@ -274,10 +336,36 @@ function startConnectFlow() {
     .finally(() => connect());
 }
 
-pad.addEventListener("touchstart", onTouchStart, { passive: false });
-pad.addEventListener("touchmove", onTouchMove, { passive: false });
-pad.addEventListener("touchend", onTouchEnd, { passive: false });
-pad.addEventListener("touchcancel", onTouchEnd, { passive: false });
+padSurface.addEventListener("touchstart", onTouchStart, { passive: false });
+padSurface.addEventListener("touchmove", onTouchMove, { passive: false });
+padSurface.addEventListener("touchend", onTouchEnd, { passive: false });
+padSurface.addEventListener("touchcancel", onTouchEnd, { passive: false });
+
+padControls?.addEventListener(
+  "touchstart",
+  (e) => {
+    e.stopPropagation();
+  },
+  { passive: true }
+);
+
+padControls?.addEventListener(
+  "touchmove",
+  (e) => {
+    e.stopPropagation();
+  },
+  { passive: true }
+);
+
+function onPadSizeChanged() {
+  if (!padSizeInput) return;
+  padScalePct = Number(padSizeInput.value);
+  applyPadSize();
+  if (connected) sendInit();
+}
+
+padSizeInput?.addEventListener("input", onPadSizeChanged);
+padSizeInput?.addEventListener("change", onPadSizeChanged);
 
 connectBtn.addEventListener("click", () => {
   startConnectFlow();
@@ -298,22 +386,20 @@ exitBtn.addEventListener("click", () => {
 
 let resizeTimer = null;
 window.addEventListener("resize", () => {
-  if (!connected) return;
   if (resizeTimer) window.clearTimeout(resizeTimer);
   resizeTimer = window.setTimeout(() => {
     resizeTimer = null;
+    applyPadSize();
     // Debounced to avoid resize storms (mobile URL bar / rotation).
-    sendInit();
-    refreshPadRect();
+    if (connected) sendInit();
   }, 150);
 });
 
 document.addEventListener("fullscreenchange", () => {
-  refreshClientSize();
-  refreshPadRect();
+  applyPadSize();
   if (connected) sendInit();
 });
 
-refreshClientSize();
-refreshPadRect();
+setUiConnected(false);
+applyPadSize();
 startMetricsLoop();

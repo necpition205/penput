@@ -90,6 +90,15 @@ async fn handle_socket(stream: WebSocket, addr: SocketAddr, state: AppState) {
     let mouse = state.mouse.clone();
     let slot = state.slot.clone();
 
+    {
+        let (w, h) = mouse.screen_size();
+        let msg = serde_json::json!({"type":"remote_screen","width":w,"height":h}).to_string();
+        if sender.send(Message::Text(msg.into())).await.is_err() {
+            slot.release().await;
+            return;
+        }
+    }
+
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {

@@ -8,6 +8,12 @@
 </head>
 <body>
   <main id="pad" aria-label="Touchpad area">
+    <div id="pad-surface" aria-hidden="true"></div>
+    <div id="pad-controls" aria-label="Pad size controls">
+      <label id="pad-size-label" for="pad-size">Pad Size</label>
+      <input id="pad-size" type="range" min="30" max="100" step="5" value="100" aria-labelledby="pad-size-label">
+      <span id="pad-size-value">100%</span>
+    </div>
     <button id="connect-btn" aria-label="Connect to desktop">Connect</button>
     <button id="exit-btn" aria-label="Exit fullscreen and disconnect">✕</button>
     <div id="status">
