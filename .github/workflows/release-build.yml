@@ -64,7 +64,7 @@ jobs:
       - name: Upload binary
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.create_release.outputs.tag_name }}
+          tag_name: release-${{ github.sha }}
           files: |
             dist/penput-linux-x86_64
             dist/penput-linux-x86_64.sha256
