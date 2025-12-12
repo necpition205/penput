@@ -62,7 +62,7 @@ private struct MetricsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("State: \(client.state.rawValue)")
             Text("Endpoint: \(client.endpoint)")
-            Text("Send: \(String(format: \"%.1f\", client.sendRate)) /s")
+            Text("Send: \(String(format: "%.1f", client.sendRate)) /s")
             Text("RTT: \(client.rttMsText)")
         }
         .font(.caption2)

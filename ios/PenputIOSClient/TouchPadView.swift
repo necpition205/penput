@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // Fullscreen touch surface. Uses UIKit touch callbacks for lowest overhead.
 struct TouchPadView: View {

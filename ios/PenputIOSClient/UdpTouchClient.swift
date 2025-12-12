@@ -13,7 +13,6 @@ import UIKit
 // - REJECT: [0x11]
 // - BUSY:   [0x12]
 // - PONG:  [0x13][t:u64]
-@MainActor
 final class UdpTouchClient: NSObject, ObservableObject {
     enum State: String {
         case disconnected
@@ -38,6 +37,16 @@ final class UdpTouchClient: NSObject, ObservableObject {
 
     private let queue = DispatchQueue(label: "penput.udp.client")
     private var connection: NWConnection?
+
+    private func onMain(_ body: @escaping () -> Void) {
+        if Thread.isMainThread {
+            body()
+        } else {
+            DispatchQueue.main.async {
+                body()
+            }
+        }
+    }
 
     private var helloTimer: DispatchSourceTimer?
     private var pingTimer: DispatchSourceTimer?
@@ -91,20 +100,24 @@ final class UdpTouchClient: NSObject, ObservableObject {
 
         conn.stateUpdateHandler = { [weak self] newState in
             guard let self else { return }
-            Task { @MainActor in
-                switch newState {
-                case .ready:
+            switch newState {
+            case .ready:
+                self.onMain {
                     self.state = .awaitingApproval
                     self.statusText = "Awaiting approval..."
-                    self.startReceiveLoop()
-                    self.startHelloLoop()
-                case .failed(let err):
+                }
+                self.startReceiveLoop()
+                self.startHelloLoop()
+
+            case .failed(let err):
+                self.onMain {
                     self.state = .failed
                     self.statusText = "Failed: \(err)"
-                    self.disconnect()
-                default:
-                    break
                 }
+                self.disconnect()
+
+            default:
+                break
             }
         }
 
@@ -113,9 +126,11 @@ final class UdpTouchClient: NSObject, ObservableObject {
 
     func disconnect() {
         cancelConnection()
-        state = .disconnected
-        statusText = "Disconnected"
-        endpoint = endpoint
+        onMain {
+            self.state = .disconnected
+            self.statusText = "Disconnected"
+            self.endpoint = self.endpoint
+        }
     }
 
     func updateViewport(size: CGSize) {
@@ -253,9 +268,7 @@ final class UdpTouchClient: NSObject, ObservableObject {
         connection.receiveMessage { [weak self] data, _, _, error in
             guard let self else { return }
             if let data {
-                Task { @MainActor in
-                    self.handleIncoming(data)
-                }
+                self.handleIncoming(data)
             }
             if error == nil {
                 self.startReceiveLoop()
@@ -269,8 +282,10 @@ final class UdpTouchClient: NSObject, ObservableObject {
         switch first {
         case 0x10:
             // ACCEPT
-            state = .connected
-            statusText = "Connected"
+            onMain {
+                self.state = .connected
+                self.statusText = "Connected"
+            }
             helloTimer?.cancel()
             helloTimer = nil
             startPingLoop()
@@ -279,21 +294,27 @@ final class UdpTouchClient: NSObject, ObservableObject {
         case 0x11:
             // REJECT
             cancelConnection()
-            state = .rejected
-            statusText = "Rejected"
+            onMain {
+                self.state = .rejected
+                self.statusText = "Rejected"
+            }
 
         case 0x12:
             // BUSY
             cancelConnection()
-            state = .busy
-            statusText = "Busy (another client connected)"
+            onMain {
+                self.state = .busy
+                self.statusText = "Busy (another client connected)"
+            }
 
         case 0x13:
             // PONG
             if data.count >= 9 {
                 let t = readU64BE(data: data, offset: 1)
                 let now = UInt64(DispatchTime.now().uptimeNanoseconds / 1_000_000)
-                rttMs = Double(now &- t)
+                onMain {
+                    self.rttMs = Double(now &- t)
+                }
             }
 
         default:
@@ -315,7 +336,10 @@ final class UdpTouchClient: NSObject, ObservableObject {
 
         let elapsed = max(1.0, nowMs - sendWindowStartMs)
         if elapsed >= 1000 {
-            sendRate = (Double(sendCount) * 1000.0) / elapsed
+            let rate = (Double(sendCount) * 1000.0) / elapsed
+            onMain {
+                self.sendRate = rate
+            }
             sendCount = 0
             sendWindowStartMs = nowMs
         }
