@@ -33,6 +33,12 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+      - name: Prepare Linux artifacts
+        run: |
+          mkdir -p dist
+          cp target/release/penput dist/penput-linux-x86_64
+          sha256sum dist/penput-linux-x86_64 > dist/penput-linux-x86_64.sha256
+
       - name: Create GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v2
@@ -48,6 +54,109 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.create_release.outputs.tag_name }}
-          files: target/release/penput
+          files: |
+            dist/penput-linux-x86_64
+            dist/penput-linux-x86_64.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  windows_binary:
+    if: contains(github.event.head_commit.message, 'release')
+    runs-on: windows-latest
+    needs: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Prepare Windows artifacts
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/penput.exe dist/penput-windows-x86_64.exe
+          $hash = (Get-FileHash dist/penput-windows-x86_64.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  penput-windows-x86_64.exe" | Out-File -Encoding ascii dist/penput-windows-x86_64.exe.sha256
+
+      - name: Upload Windows binary
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: release-${{ github.sha }}
+          files: |
+            dist/penput-windows-x86_64.exe
+            dist/penput-windows-x86_64.exe.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  ios_ipa:
+    if: contains(github.event.head_commit.message, 'release')
+    runs-on: macos-latest
+    needs: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: |
+          brew update
+          brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          cd ios/PenputIOSClient
+          xcodegen generate
+
+      - name: Build (no codesign)
+        run: |
+          cd ios/PenputIOSClient
+          xcodebuild \
+            -project PenputIOSClient.xcodeproj \
+            -scheme PenputIOSClient \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Package .ipa
+        run: |
+          cd ios/PenputIOSClient
+          APP_PATH="build/Build/Products/Release-iphoneos/PenputIOSClient.app"
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          IPA_NAME="PenputIOSClient-unsigned-${{ github.sha }}.ipa"
+          /usr/bin/zip -r "$IPA_NAME" Payload
+          shasum -a 256 "$IPA_NAME" > "$IPA_NAME.sha256"
+          xcodebuild -version > PenputIOSClient-unsigned-${{ github.sha }}.details.txt
+          {
+            echo "";
+            echo "This IPA is unsigned (CODE_SIGNING_ALLOWED=NO).";
+            echo "To install on your personal iPad without Apple Developer Program:";
+            echo "- Use Sideloadly or AltStore on Windows to sign the IPA with your Apple ID.";
+            echo "- Expect ~7-day expiry and weekly refresh.";
+            echo "";
+            echo "Server expects UDP on --udp-port (default 9002).";
+            echo "";
+            echo "Commit: ${{ github.sha }}";
+          } >> PenputIOSClient-unsigned-${{ github.sha }}.details.txt
+
+      - name: Upload iOS IPA to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: release-${{ github.sha }}
+          files: |
+            ios/PenputIOSClient/PenputIOSClient-unsigned-${{ github.sha }}.ipa
+            ios/PenputIOSClient/PenputIOSClient-unsigned-${{ github.sha }}.ipa.sha256
+            ios/PenputIOSClient/PenputIOSClient-unsigned-${{ github.sha }}.details.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,28 @@
+name: PenputIOSClient
+
+options:
+  deploymentTarget:
+    iOS: "15.0"
+
+schemes:
+  PenputIOSClient:
+    build:
+      targets:
+        PenputIOSClient: all
+
+targets:
+  PenputIOSClient:
+    type: application
+    platform: iOS
+    sources:
+      - path: .
+        includes:
+          - "*.swift"
+    info:
+      path: Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.penput.iosclient
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: 5.0

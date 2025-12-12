@@ -1,6 +1,7 @@
 mod connection;
 mod http;
 mod mouse;
+mod udp;
 mod websocket;
 
 use crate::connection::{ApprovalBroker, ConnectionSlot, approval_worker};
@@ -16,6 +17,7 @@ use tracing_subscriber::FmtSubscriber;
 struct Settings {
     http_port: u16,
     ws_port: u16,
+    udp_port: u16,
     auto_approve: bool,
 }
 
@@ -33,11 +35,13 @@ async fn main() -> anyhow::Result<()> {
     info!("🖱️  Penput");
     info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     info!(
-        "Server running at:\n  HTTP: http://{}:{}\n  WebSocket: ws://{}:{}/ws",
+        "Server running at:\n  HTTP: http://{}:{}\n  WebSocket: ws://{}:{}/ws\n  UDP (iOS): udp://{}:{}",
         local_ip(),
         settings.http_port,
         local_ip(),
-        settings.ws_port
+        settings.ws_port,
+        local_ip(),
+        settings.udp_port,
     );
     info!("Open this URL on your mobile browser.");
     info!("Press Ctrl+C to stop.");
@@ -56,6 +60,15 @@ async fn main() -> anyhow::Result<()> {
     {
         let http_router = http::build_http_router()?;
         tasks.spawn(http::serve_http(http_router, settings.http_port));
+    }
+
+    {
+        let state = udp::UdpState {
+            slot: connection_slot.clone(),
+            broker: approval_broker.clone(),
+            mouse: mouse.clone(),
+        };
+        tasks.spawn(udp::serve_udp(state, settings.udp_port));
     }
 
     while let Some(res) = tasks.join_next().await {
@@ -77,6 +90,7 @@ fn init_tracing() {
 fn parse_args() -> Settings {
     let mut http_port = 8080u16;
     let mut ws_port = 9001u16;
+    let mut udp_port = 9002u16;
     let mut auto_approve = false;
 
     let mut args = std::env::args().skip(1);
@@ -92,6 +106,11 @@ fn parse_args() -> Settings {
                     ws_port = val.parse().unwrap_or(ws_port);
                 }
             }
+            "--udp-port" => {
+                if let Some(val) = args.next() {
+                    udp_port = val.parse().unwrap_or(udp_port);
+                }
+            }
             "--auto-approve" => {
                 auto_approve = true;
             }
@@ -102,6 +121,7 @@ fn parse_args() -> Settings {
     Settings {
         http_port,
         ws_port,
+        udp_port,
         auto_approve,
     }
 }
