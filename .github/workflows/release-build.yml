@@ -25,21 +25,10 @@ jobs:
             libx11-dev
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+        uses: Swatinem/rust-cache@v2
 
       - name: Build release
         run: cargo build --release
@@ -75,10 +64,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
       - name: Build release
         run: cargo build --release
@@ -107,13 +96,22 @@ jobs:
 
       - name: Install XcodeGen
         run: |
-          brew update
           brew install xcodegen
+
+      - name: Xcode environment
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
 
       - name: Generate Xcode project
         run: |
           cd ios/PenputIOSClient
           xcodegen generate
+
+      - name: List schemes
+        run: |
+          cd ios/PenputIOSClient
+          xcodebuild -list -project PenputIOSClient.xcodeproj
 
       - name: Build (no codesign)
         run: |
@@ -134,6 +132,14 @@ jobs:
         run: |
           cd ios/PenputIOSClient
           APP_PATH="build/Build/Products/Release-iphoneos/PenputIOSClient.app"
+          if [ ! -d "$APP_PATH" ]; then
+            APP_PATH="$(find build -type d -name 'PenputIOSClient.app' | head -n 1)"
+          fi
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "Failed to locate .app bundle in derivedDataPath" >&2
+            find build -maxdepth 6 -type d -name '*.app' -print || true
+            exit 1
+          fi
           rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
