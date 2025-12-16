@@ -1,3 +1,11 @@
+import {
+  InputMode,
+  computePadSize,
+  mapToPadCoordinates,
+  absoluteToScreen,
+  RelativeTracker,
+} from "./touchpad.js";
+
 const statusText = document.getElementById("status-text");
 const indicator = document.getElementById("touch-indicator");
 const exitBtn = document.getElementById("exit-btn");
@@ -7,6 +15,7 @@ const padSurface = document.getElementById("pad-surface");
 const padControls = document.getElementById("pad-controls");
 const padSizeInput = document.getElementById("pad-size");
 const padSizeValue = document.getElementById("pad-size-value");
+const modeSelect = document.getElementById("input-mode");
 
 function setUiConnected(isConnected) {
   if (isConnected) {
@@ -40,6 +49,14 @@ let padScalePct = Number(padSizeInput?.value ?? 100);
 let remoteW = 0;
 let remoteH = 0;
 
+// Input mode: absolute or relative.
+let inputMode = InputMode.ABSOLUTE;
+const relativeTracker = new RelativeTracker(1.5);
+
+// Computed pad size (cached).
+let padW = 0;
+let padH = 0;
+
 // Metrics (shown on-screen so mobile can debug without console)
 let wsUrlInUse = "";
 let lastRttMs = null;
@@ -70,28 +87,19 @@ function applyPadSize() {
   if (padSizeInput) padSizeInput.value = String(pct);
   if (padSizeValue) padSizeValue.textContent = `${pct}%`;
 
-  const base = Math.max(1, Math.min(window.innerWidth, window.innerHeight));
-  const maxSide = Math.max(1, Math.round((base * pct) / 100));
+  // Use pure function from touchpad.js.
+  const size = computePadSize(
+    window.innerWidth,
+    window.innerHeight,
+    remoteW,
+    remoteH,
+    pct
+  );
+  padW = size.width;
+  padH = size.height;
 
-  const aspect =
-    remoteW > 0 && remoteH > 0
-      ? Math.max(1e-6, Math.min(1e6, remoteW / remoteH))
-      : 1;
-
-  let w = maxSide;
-  let h = maxSide;
-  if (aspect >= 1) {
-    // Landscape: width is the limiting side.
-    w = maxSide;
-    h = Math.max(1, Math.round(maxSide / aspect));
-  } else {
-    // Portrait: height is the limiting side.
-    h = maxSide;
-    w = Math.max(1, Math.round(maxSide * aspect));
-  }
-
-  padSurface.style.width = `${w}px`;
-  padSurface.style.height = `${h}px`;
+  padSurface.style.width = `${padW}px`;
+  padSurface.style.height = `${padH}px`;
 
   refreshPadRect();
   refreshClientSize();
@@ -106,6 +114,7 @@ function startMetricsLoop() {
       `WS: ${connected ? "connected" : connecting ? "connecting" : "disconnected"}\n` +
       `URL: ${wsUrlInUse || "-"}\n` +
       `Client: ${clientW}x${clientH}\n` +
+      `Mode: ${inputMode}\n` +
       `Touch: ${touchPoint.x},${touchPoint.y}\n` +
       `Send: ${sendRate.toFixed(1)}/s\n` +
       `RTT: ${rtt} (pong ${pongAge})`;
@@ -302,18 +311,34 @@ function onTouchEnd(e) {
   if (e.target === connectBtn || e.target === exitBtn) return;
   e.preventDefault();
   indicator.classList.remove("active");
+  // Reset relative tracker on touch end.
+  relativeTracker.reset();
 }
 
 function updatePoint(e) {
   const touch = e.touches[0];
   if (!touch) return;
   const rect = padRect || padSurface.getBoundingClientRect();
-  const relX = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
-  const relY = Math.max(0, Math.min(1, (touch.clientY - rect.top) / rect.height));
-  const pxX = Math.min(clientW - 1, Math.max(0, Math.round(relX * clientW)));
-  const pxY = Math.min(clientH - 1, Math.max(0, Math.round(relY * clientH)));
-  touchPoint.x = pxX;
-  touchPoint.y = pxY;
+
+  // Map to local pad coordinates using pure function.
+  const local = mapToPadCoordinates(
+    touch.clientX - rect.left,
+    touch.clientY - rect.top,
+    rect.width,
+    rect.height,
+    padW,
+    padH
+  );
+
+  let screenPos;
+  if (inputMode === InputMode.ABSOLUTE) {
+    screenPos = absoluteToScreen(local.x, local.y, padW, padH, clientW, clientH);
+  } else {
+    screenPos = relativeTracker.update(local.x, local.y, padW, padH, clientW, clientH);
+  }
+
+  touchPoint.x = screenPos.x;
+  touchPoint.y = screenPos.y;
   scheduleSend();
 }
 
@@ -366,6 +391,16 @@ function onPadSizeChanged() {
 
 padSizeInput?.addEventListener("input", onPadSizeChanged);
 padSizeInput?.addEventListener("change", onPadSizeChanged);
+
+// Input mode toggle handler.
+function onModeChanged() {
+  if (!modeSelect) return;
+  inputMode = modeSelect.value === "relative" ? InputMode.RELATIVE : InputMode.ABSOLUTE;
+  // Sync relative tracker position with current touch point.
+  relativeTracker.setPosition(touchPoint.x, touchPoint.y);
+  relativeTracker.reset();
+}
+modeSelect?.addEventListener("change", onModeChanged);
 
 connectBtn.addEventListener("click", () => {
   startConnectFlow();

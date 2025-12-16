@@ -1,57 +1,69 @@
 import SwiftUI
 import UIKit
 
+// Pure function: compute pad size from container, remote screen, and scale percentage.
+// Extracted for testability and SRP.
+func computePadSize(containerSize: CGSize, remoteScreenSize: CGSize, padScalePct: Double) -> CGSize {
+    let pct = CGFloat(max(10.0, min(100.0, padScalePct)))
+    let base = max(1.0, min(containerSize.width, containerSize.height))
+    let maxSide = max(1.0, (base * (pct / 100.0)).rounded())
+
+    let rawAspect = remoteScreenSize.width > 0.0 && remoteScreenSize.height > 0.0
+        ? (remoteScreenSize.width / remoteScreenSize.height)
+        : 1.0
+    let aspect = min(1_000_000.0, max(0.000_001, rawAspect))
+
+    var w = maxSide
+    var h = maxSide
+    if aspect >= 1.0 {
+        w = maxSide
+        h = max(1.0, (maxSide / aspect).rounded())
+    } else {
+        h = maxSide
+        w = max(1.0, (maxSide * aspect).rounded())
+    }
+
+    return CGSize(width: w, height: h)
+}
+
+// Pure function: map raw touch point to local pad coordinates.
+func mapToPadCoordinates(point: CGPoint, containerSize: CGSize, padSize: CGSize) -> CGPoint {
+    let offsetX = max(0.0, (containerSize.width - padSize.width) * 0.5)
+    let offsetY = max(0.0, (containerSize.height - padSize.height) * 0.5)
+
+    let localX = min(padSize.width - 0.001, max(0.0, point.x - offsetX))
+    let localY = min(padSize.height - 0.001, max(0.0, point.y - offsetY))
+
+    return CGPoint(x: localX, y: localY)
+}
+
 // Fullscreen touch surface. Uses UIKit touch callbacks for lowest overhead.
 struct TouchPadView: View {
     @ObservedObject var client: UdpTouchClient
     let padScalePct: Double
     let stylusOnly: Bool
 
-    // Match the web client's pad sizing: scale by min side and preserve remote aspect ratio.
-    private func computePadSize(containerSize: CGSize) -> CGSize {
-        let pct = CGFloat(max(10.0, min(100.0, padScalePct)))
-        let base = max(1.0, min(containerSize.width, containerSize.height))
-        let maxSide = max(1.0, (base * (pct / 100.0)).rounded())
-
-        let remote = client.remoteScreenSize
-        let rawAspect = remote.width > 0.0 && remote.height > 0.0 ? (remote.width / remote.height) : 1.0
-        let aspect = min(1_000_000.0, max(0.000_001, rawAspect))
-
-        var w = maxSide
-        var h = maxSide
-        if aspect >= 1.0 {
-            w = maxSide
-            h = max(1.0, (maxSide / aspect).rounded())
-        } else {
-            h = maxSide
-            w = max(1.0, (maxSide * aspect).rounded())
-        }
-
-        return CGSize(width: w, height: h)
-    }
-
     var body: some View {
         TouchPadRepresentable(
             stylusOnly: stylusOnly,
             onTouch: { point, size in
-                let padSize = computePadSize(containerSize: size)
-
-                let offsetX = max(0.0, (size.width - padSize.width) * 0.5)
-                let offsetY = max(0.0, (size.height - padSize.height) * 0.5)
-
-                let localX = min(padSize.width, max(0.0, point.x - offsetX))
-                let localY = min(padSize.height, max(0.0, point.y - offsetY))
-
-                client.updateTouch(
-                    point: CGPoint(x: localX, y: localY),
-                    padSize: padSize
+                let padSize = computePadSize(
+                    containerSize: size,
+                    remoteScreenSize: client.remoteScreenSize,
+                    padScalePct: padScalePct
                 )
+                let local = mapToPadCoordinates(point: point, containerSize: size, padSize: padSize)
+                client.updateTouch(point: local, padSize: padSize)
             },
             onEnd: {
                 client.endTouch()
             },
             onLayout: { size in
-                let padSize = computePadSize(containerSize: size)
+                let padSize = computePadSize(
+                    containerSize: size,
+                    remoteScreenSize: client.remoteScreenSize,
+                    padScalePct: padScalePct
+                )
                 client.updateViewport(size: padSize)
             }
         )
@@ -79,7 +91,7 @@ private struct TouchPadRepresentable: UIViewRepresentable {
         uiView.onTouch = onTouch
         uiView.onEnd = onEnd
         uiView.onLayout = onLayout
-        onLayout(uiView.bounds.size)
+        // Note: onLayout is called from layoutSubviews(); no need to call here to avoid duplication.
     }
 }
 

@@ -13,6 +13,12 @@ import UIKit
 // - REJECT: [0x11]
 // - BUSY:   [0x12]
 // - PONG:  [0x13][t:u64]
+// Input mode: absolute (touch position maps to screen position) or relative (delta movement like a trackpad).
+enum InputMode: String, CaseIterable {
+    case absolute
+    case relative
+}
+
 final class UdpTouchClient: NSObject, ObservableObject {
     enum State: String {
         case disconnected
@@ -33,6 +39,9 @@ final class UdpTouchClient: NSObject, ObservableObject {
     @Published private(set) var pongIntervalMs: Double? = nil
     @Published private(set) var remoteScreenSize: CGSize = .zero
     @Published private(set) var viewportSize: CGSize = .zero
+
+    // Current input mode (absolute vs relative).
+    @Published var inputMode: InputMode = .absolute
 
     var rttMsText: String {
         guard let rttMs else { return "-" }
@@ -76,6 +85,14 @@ final class UdpTouchClient: NSObject, ObservableObject {
     private var latestY: UInt16 = 0
     private var touchActive = false
     private var needsSend = false
+
+    // For relative mode: track last touch point to compute delta.
+    private var lastTouchPoint: CGPoint? = nil
+    // Accumulated sub-pixel delta for relative mode.
+    private var accumulatedDeltaX: Double = 0.0
+    private var accumulatedDeltaY: Double = 0.0
+    // Sensitivity multiplier for relative mode.
+    private let relativeSensitivity: Double = 1.5
 
     private var sendCount: Int = 0
     private var sendWindowStartMs: Double = CACurrentMediaTime() * 1000
@@ -160,48 +177,92 @@ final class UdpTouchClient: NSObject, ObservableObject {
     }
 
     func updateViewport(size: CGSize) {
-        let w = UInt16(max(1, min(65535, Int(size.width.rounded()))))
-        let h = UInt16(max(1, min(65535, Int(size.height.rounded()))))
-        if w == clientW && h == clientH { return }
+        queue.async { [weak self] in
+            guard let self else { return }
+            let w = UInt16(max(1, min(65535, Int(size.width.rounded()))))
+            let h = UInt16(max(1, min(65535, Int(size.height.rounded()))))
+            if w == self.clientW && h == self.clientH { return }
 
-        clientW = w
-        clientH = h
-        onMain {
-            self.viewportSize = CGSize(width: CGFloat(w), height: CGFloat(h))
-        }
+            self.clientW = w
+            self.clientH = h
+            self.onMain {
+                self.viewportSize = CGSize(width: CGFloat(w), height: CGFloat(h))
+            }
 
-        helloPacket[0] = 0x01
-        helloPacket[1] = UInt8((w >> 8) & 0xff)
-        helloPacket[2] = UInt8(w & 0xff)
-        helloPacket[3] = UInt8((h >> 8) & 0xff)
-        helloPacket[4] = UInt8(h & 0xff)
+            self.helloPacket[0] = 0x01
+            self.helloPacket[1] = UInt8((w >> 8) & 0xff)
+            self.helloPacket[2] = UInt8(w & 0xff)
+            self.helloPacket[3] = UInt8((h >> 8) & 0xff)
+            self.helloPacket[4] = UInt8(h & 0xff)
 
-        // If we are already connected/awaiting approval, refresh hello.
-        if state == .awaitingApproval || state == .connected {
-            sendBytes(helloPacket)
+            // If we are already connected/awaiting approval, refresh hello.
+            if self.state == .awaitingApproval || self.state == .connected {
+                self.sendBytes(self.helloPacket)
+            }
         }
     }
 
     func updateTouch(point: CGPoint, padSize: CGSize) {
-        guard clientW > 0, clientH > 0 else { return }
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard self.clientW > 0, self.clientH > 0 else { return }
 
-        let padW = max(1.0, padSize.width)
-        let padH = max(1.0, padSize.height)
+            let padW = max(1.0, padSize.width)
+            let padH = max(1.0, padSize.height)
 
-        let relX = max(0.0, min(1.0, Double(point.x / padW)))
-        let relY = max(0.0, min(1.0, Double(point.y / padH)))
+            // Branch based on input mode.
+            if self.inputMode == .absolute {
+                // Absolute mode: map touch position to screen position.
+                let relX = max(0.0, min(1.0, Double(point.x / padW)))
+                let relY = max(0.0, min(1.0, Double(point.y / padH)))
 
-        let x = UInt16(min(Double(clientW - 1), max(0.0, (relX * Double(clientW)).rounded())))
-        let y = UInt16(min(Double(clientH - 1), max(0.0, (relY * Double(clientH)).rounded())))
+                let x = UInt16(min(Double(self.clientW - 1), max(0.0, (relX * Double(self.clientW)).rounded())))
+                let y = UInt16(min(Double(self.clientH - 1), max(0.0, (relY * Double(self.clientH)).rounded())))
 
-        latestX = x
-        latestY = y
-        touchActive = true
-        needsSend = true
+                self.latestX = x
+                self.latestY = y
+                self.lastTouchPoint = point
+            } else {
+                // Relative mode: compute delta from last touch point.
+                if let last = self.lastTouchPoint {
+                    let dx = Double(point.x - last.x) * self.relativeSensitivity
+                    let dy = Double(point.y - last.y) * self.relativeSensitivity
+
+                    // Accumulate sub-pixel movement.
+                    self.accumulatedDeltaX += dx * Double(self.clientW) / padW
+                    self.accumulatedDeltaY += dy * Double(self.clientH) / padH
+
+                    // Extract integer part.
+                    let intDx = Int(self.accumulatedDeltaX)
+                    let intDy = Int(self.accumulatedDeltaY)
+                    self.accumulatedDeltaX -= Double(intDx)
+                    self.accumulatedDeltaY -= Double(intDy)
+
+                    // Apply delta to current position.
+                    var newX = Int(self.latestX) + intDx
+                    var newY = Int(self.latestY) + intDy
+                    newX = max(0, min(Int(self.clientW - 1), newX))
+                    newY = max(0, min(Int(self.clientH - 1), newY))
+
+                    self.latestX = UInt16(newX)
+                    self.latestY = UInt16(newY)
+                }
+                self.lastTouchPoint = point
+            }
+
+            self.touchActive = true
+            self.needsSend = true
+        }
     }
 
     func endTouch() {
-        touchActive = false
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.touchActive = false
+            self.lastTouchPoint = nil
+            self.accumulatedDeltaX = 0.0
+            self.accumulatedDeltaY = 0.0
+        }
     }
 
     private func startHelloLoop() {

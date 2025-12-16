@@ -1,17 +1,30 @@
 use axum::{
-    http::header::CONTENT_TYPE,
-    response::{Html, IntoResponse},
-    routing::get,
+    http::{header::CACHE_CONTROL, HeaderValue, StatusCode},
+    routing::get_service,
     Router,
 };
-use tower_http::trace::TraceLayer;
+use tower_http::{
+    services::ServeDir,
+    set_header::SetResponseHeaderLayer,
+    trace::TraceLayer,
+};
 
 /// Build the HTTP router serving embedded static assets.
 pub fn build_http_router() -> anyhow::Result<Router> {
+    let static_service = get_service(ServeDir::new("static").append_index_html_on_directories(true))
+        .handle_error(|err| async move {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("static file error: {err}"),
+            )
+        });
+
     let router = Router::new()
-        .route("/", get(index))
-        .route("/style.css", get(style))
-        .route("/app.js", get(app_js))
+        .fallback_service(static_service)
+        .layer(SetResponseHeaderLayer::overriding(
+            CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
         .layer(TraceLayer::new_for_http());
 
     Ok(router)
@@ -23,23 +36,3 @@ pub async fn serve_http(app: Router, port: u16) -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
     Ok(())
 }
-
-async fn index() -> impl IntoResponse {
-    let body = Html(include_str!("../static/index.html"));
-    ([(CONTENT_TYPE, "text/html; charset=utf-8")], body)
-}
-
-async fn style() -> impl IntoResponse {
-    (
-        [(CONTENT_TYPE, "text/css; charset=utf-8")],
-        include_str!("../static/style.css"),
-    )
-}
-
-async fn app_js() -> impl IntoResponse {
-    (
-        [(CONTENT_TYPE, "application/javascript; charset=utf-8")],
-        include_str!("../static/app.js"),
-    )
-}
-

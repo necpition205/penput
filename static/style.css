@@ -59,7 +59,10 @@ body {
   z-index: 4;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 10px;
+  max-width: calc(100vw - 24px);
   background: rgba(0, 0, 0, 0.45);
   padding: 10px 12px;
   border-radius: 999px;
@@ -73,13 +76,40 @@ body {
 }
 
 #pad-size {
-  width: 160px;
+  width: min(160px, 44vw);
 }
 
 #pad-size-value {
   font-size: 12px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+}
+
+.control-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 4px;
+}
+
+#input-mode-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+#input-mode {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+  outline: none;
+}
+
+#input-mode:focus {
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 #exit-btn {

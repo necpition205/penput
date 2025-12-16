@@ -13,6 +13,12 @@
       <label id="pad-size-label" for="pad-size">Pad Size</label>
       <input id="pad-size" type="range" min="30" max="100" step="5" value="100" aria-labelledby="pad-size-label">
       <span id="pad-size-value">100%</span>
+      <span class="control-divider"></span>
+      <label id="input-mode-label" for="input-mode">Mode</label>
+      <select id="input-mode" aria-labelledby="input-mode-label">
+        <option value="absolute" selected>Absolute</option>
+        <option value="relative">Relative</option>
+      </select>
     </div>
     <button id="connect-btn" aria-label="Connect to desktop">Connect</button>
     <button id="exit-btn" aria-label="Exit fullscreen and disconnect">✕</button>
